@@ -1,0 +1,10 @@
+# 忽略登录凭证和数据库
+state.json
+zhihu_articles.db
+
+# 🌟 忽略环境变量配置（极其重要！）
+.env
+
+# 忽略缓存和临时文件夹
+__pycache__/
+知乎_Juan_动态合集(含本地图片)/

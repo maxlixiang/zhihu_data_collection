@@ -1,0 +1,7 @@
+playwright==1.59.0
+beautifulsoup4
+markdownify
+requests
+pyTelegramBotAPI
+schedule
+python-dotenv
