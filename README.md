@@ -1,7 +1,10 @@
 # Zhihu Activity Local Archiver
 
-本工具用于本地归档任意知乎个人主页动态、回答、专栏、文章等出现在个人主页选项卡上的文章。
-本工具用于本地归档任意知乎个人主页动态、回答、专栏、文章等出现在个人主页选项卡上的文章，比如：
+本工具使用playwright技术，用于本地归档任意知乎个人主页动态、回答、专栏、文章等出现在个人主页选项卡上的文章。
+程序执行过程会启用chromium，在滚动网页的过程中下载文章，被风控的风险较小。
+
+比如：
+
 https://www.zhihu.com/people/yuanmu96/answers # 回答
 https://www.zhihu.com/people/yuanmu96   # 主页动态
 https://www.zhihu.com/people/yuanmu96/asks # 提问
