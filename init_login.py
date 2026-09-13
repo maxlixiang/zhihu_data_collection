@@ -1,23 +1,40 @@
+import argparse
+import os
+
 from playwright.sync_api import sync_playwright
-import time
 
-print("="*50)
-print("🚀 初始化知乎登录凭证")
-print("="*50)
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False) # 必须显示界面让你扫码
-    context = browser.new_context(viewport={'width': 1366, 'height': 768})
-    page = context.new_page()
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-    page.goto("https://www.zhihu.com")
-    print("⏳ 请在弹出的浏览器中，利用这 60 秒时间扫码或密码登录知乎！")
-    print("⏳ 登录成功后请耐心等待倒计时结束...")
-    
-    # 给足够的时间让你扫码
-    time.sleep(60) 
 
-    # 保存登录状态到 state.json
-    context.storage_state(path="state.json")
-    print("✅ 登录凭证已成功保存为 state.json！")
-    browser.close()
+def main():
+    parser = argparse.ArgumentParser(description="初始化知乎 Playwright 登录凭证")
+    parser.add_argument(
+        "--state-file",
+        default=os.path.join(PROJECT_DIR, "state.json"),
+        help="登录态保存路径，默认当前项目的 state.json",
+    )
+    args = parser.parse_args()
+    state_file = os.path.abspath(args.state_file)
+
+    print("=" * 50)
+    print("🚀 初始化知乎登录凭证")
+    print("=" * 50)
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=False)
+        context = browser.new_context(viewport={"width": 1366, "height": 768})
+        page = context.new_page()
+        page.goto("https://www.zhihu.com/signin", wait_until="domcontentloaded", timeout=30000)
+
+        print("⏳ 请在浏览器中完成扫码或密码登录。")
+        input("✅ 确认已登录并能正常浏览知乎后，回到此终端按 Enter 保存凭证...")
+
+        context.storage_state(path=state_file)
+        print(f"✅ 登录凭证已保存: {state_file}")
+        context.close()
+        browser.close()
+
+
+if __name__ == "__main__":
+    main()

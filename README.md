@@ -1,139 +1,214 @@
-# Zhihu Activity Local Archiver
+# 知乎本地归档工具
 
-本工具使用playwright技术，用于本地归档任意知乎个人主页动态、回答、专栏、文章等出现在个人主页选项卡上的文章。
-程序执行过程会启用chromium，在滚动网页的过程中下载文章，被风控的风险较小。
+这是一个只在本机运行的知乎个人归档项目，提供两条采集通道：
 
-比如：
+1. **Playwright 程序采集**：适合积累较多时批量处理，从个人主页动态流读取正文、少量评论和图片。
+2. **Computer Use + 油猴插件采集**：适合每天少量、及时归档，由浏览器完成接近人工的操作，再通过本地桥接程序统一保存。
 
-https://www.zhihu.com/people/yuanmu96/answers # 回答
-https://www.zhihu.com/people/yuanmu96   # 主页动态
-https://www.zhihu.com/people/yuanmu96/asks # 提问
-https://www.zhihu.com/people/yuanmu96/posts #文章
-https://www.zhihu.com/people/yuanmu96/pins # 想法
+两条通道共用同一个 SQLite 数据库、内容 ID、命名规则、文章目录和图片目录，因此可以交替使用，不会因为换采集方式而重复下载。
 
-至于专栏和收藏，则需要手动打开专栏页面和收藏页面，找到对应的专栏和收藏URL以后，也可以实现抓取。比如：
-https://www.zhihu.com/collection/20441812 #某收藏夹
+## 当前保存位置
 
-以上链接的特点是都可以在一个网页中滚动查看所有内容，不需要打开新网页，只要满足这个条件的知乎页面都可以被抓取。
-
-程序只在目标URL的动态流中滚动、点击“阅读全文/展开全文/阅读原文”、提取当前卡片正文，并保存为 Markdown；不会打开文章或回答详情页。
-## 功能
-
-- 支持输入任意可滚动的知乎列表页 URL。
-- 按动态发生时间过滤，例如只抓 `2020-01-01` 到 `2024-02-14`。
-- 在主页动态卡片内展开正文并保存 Markdown。
-- Markdown 文件名格式为 `[YYYY-MM-DD_HH-MM] 标题.md`。
-- 自动下载正文图片到同名目录，并把 Markdown 图片链接改为本地相对路径。
-- 对回答动态可抓取第一页精选评论。
-- 使用 SQLite 去重，重复运行会跳过已保存文章。
-
-## 文件结构
+所有开发和日常操作都在本项目完成，不再依赖旧项目目录。
 
 ```text
-zhihu_data_collection/
-├── zhihu_scraper.py      # 本地归档主脚本
-├── init_login.py         # 生成知乎登录态 state.json
-├── state.json            # Playwright 登录态
-├── zhihu_articles.db     # SQLite 去重数据库
-├── requirements.txt
-└── data/
-    └── articles/         # 默认 Markdown 输出目录
+项目根目录/
+├── data/articles/YYYY/MM/   Markdown 与同名图片目录
+├── zhihu_articles.db        两条通道共用的去重数据库
+├── state.json               Playwright 登录态
+└── metadata_reports/        旧文件元数据补全报告
 ```
+
+`state.json`、数据库和 `data/` 都是本机运行数据，默认不会提交到 Git。
+
+## 项目结构
+
+```text
+zhihu_data_collection-playwright技术/
+├── zhihu_scraper.py              Playwright 采集入口
+├── clipboard_bridge.py           Computer Use 剪贴板桥接入口
+├── init_login.py                 生成 Playwright 登录态
+├── enrich_old_metadata.py        旧 Markdown 表头补全入口
+├── zhihu_archive/                两条通道共用的核心实现
+│   ├── content.py                文件名、YAML、图片本地化
+│   └── store.py                  SQLite、稳定 ID、采集边界
+├── maintenance/
+│   └── metadata_enrichment.py    旧文件元数据匹配与报告
+├── docs/                         详细操作文档
+├── tests/                        自动化测试
+├── legacy_reference/             历史实现参考，不参与运行
+├── data/articles/                归档数据
+├── metadata_reports/             运行报告
+└── AGENTS.md                     给 Codex/其他 AI 的维护约束
+```
+
+根目录保留可直接运行的脚本，避免改变既有使用习惯；共享规则集中在 `zhihu_archive/`，避免两个采集通道各维护一套逻辑。
+
+```mermaid
+flowchart LR
+    Z[知乎个人主页] --> P[Playwright 采集]
+    Z --> C[Computer Use + 油猴插件]
+    P --> K[zhihu_archive 共享核心]
+    C --> B[clipboard_bridge]
+    B --> K
+    K --> D[(zhihu_articles.db)]
+    K --> F[data/articles Markdown + 图片]
+    K --> R[archive_frontier 采集边界]
+```
+
+Computer Use 通道依赖当前 Codex 任务和可操作的 Chrome 会话，并不是脱离桌面独立运行的后台服务；日常启动方式及停止条件见专门文档。
 
 ## 安装
 
 ```powershell
+Set-Location "F:\Git上的程序等等\zhihu_data_collection-playwright技术"
 python -m venv .venv
-.\.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-## 登录
-
-首次使用需要生成 `state.json`：
+## 初始化登录
 
 ```powershell
 python init_login.py
 ```
 
-按浏览器提示完成知乎登录。后续抓取会复用 `state.json`。
+在弹出的 Chromium 中完成知乎登录，然后回到终端按 Enter。登录态默认保存到当前项目的 `state.json`。
 
-## 快速测试
+## 方式一：Playwright 程序采集
 
-抓取目标主页最新 5 条符合条件的动态：
-
-```powershell
-python zhihu_scraper.py --backfill-local --url "https://www.zhihu.com/people/li-xiang-57-76" --start-date 2026-01-01 --end-date 2026-12-31 --limit 5 --max-scrolls 50
-```
-
-输出文件默认保存在：
-
-```text
-data/articles/
-```
-
-也可以指定输出目录：
+日常手动采集最多 30 篇：
 
 ```powershell
-python zhihu_scraper.py --backfill-local --url "https://www.zhihu.com/people/li-xiang-57-76" --start-date 2026-01-01 --end-date 2026-12-31 --limit 5 --output-dir "D:\zhihu_exports\li-xiang"
+python zhihu_scraper.py --limit 30
 ```
 
-## 历史回溯
+默认行为：
 
-示例：抓取某个主页在 `2020-01-01` 到 `2024-02-14` 之间产生的动态。
+- 访问固定主页 `https://www.zhihu.com/people/li-xiang-57-76`；
+- 显示浏览器窗口；
+- 保存到 `data/articles/YYYY/MM/`；
+- 使用根目录的 `zhihu_articles.db` 去重；
+- 对回答保存第一页最多 15 条有效评论；
+- 命中上一次成功采集的边界后正常结束；
+- 若达到数量上限但没有命中边界，本轮标记为不完整，下次继续。
+
+常用选项：
 
 ```powershell
-python zhihu_scraper.py --backfill-local --url "https://www.zhihu.com/people/li-xiang-57-76" --start-date 2020-01-01 --end-date 2024-02-14 --limit 0 --max-scrolls 10000
+python zhihu_scraper.py --limit 30 --no-comments
+python zhihu_scraper.py --limit 30 --headless
+python zhihu_scraper.py --limit 30 --url "https://www.zhihu.com/people/li-xiang-57-76"
 ```
 
-## 加速参数
+`--headless` 只控制是否显示浏览器，不会改变保存格式。考虑到风控，建议人工触发、控制频率；检测到登录页、安全验证、页面结构异常或连续滚动无增长时，程序会停止并生成 `zhihu_last_*.png`，不会持续重试。
 
-程序分为两个阶段：
-
-- `seek`：快速滚动到目标结束日期附近，只检查页面底部少量动态的时间。
-- `collect`：进入目标时间段后，逐条展开动态并保存 Markdown。
-
-常用加速参数：
+### 历史回溯
 
 ```powershell
 python zhihu_scraper.py --backfill-local `
-  --url "https://www.zhihu.com/people/li-xiang-57-76" `
-  --start-date 2020-01-01 `
-  --end-date 2024-02-14 `
+  --start-date 2024-01-01 `
+  --end-date 2024-12-31 `
   --limit 0 `
-  --max-scrolls 10000 `
-  --seek-delay-min 0.3 `
-  --seek-delay-max 0.8 `
-  --collect-delay-min 0.8 `
-  --collect-delay-max 1.5 `
-  --seek-tail-count 30 `
-  --seek-scroll-burst 3
+  --max-scrolls 10000
 ```
 
-参数说明：
+历史回溯只在主页动态流中滚动和展开，不打开回答详情页。详细参数可运行：
 
-- `--seek-tail-count`：seek 阶段每轮只检查最后 N 个动态卡片，默认 `30`。
-- `--seek-scroll-burst`：seek 阶段每轮连续滚动次数，默认 `3`。
-- `--seek-delay-min/max`：seek 阶段滚动后的等待范围。
-- `--collect-delay-min/max`：collect 阶段滚动后的等待范围。
+```powershell
+python zhihu_scraper.py --help
+```
 
-## 常用参数
+## 方式二：Computer Use + 油猴插件
+
+该方式不修改“知乎备份剪藏”油猴插件。Computer Use 负责打开主页、加载适量评论并点击“复制为 Markdown”；`clipboard_bridge.py` 负责把剪贴板内容转换成与程序采集完全一致的文件结构，并登记到共享数据库。
+
+桥接程序会在写文件前检查作者、动态时间、动态动作、发布时间、来源链接和内容类型；任何必需字段缺失都会停止，不生成不完整归档。
+
+桥接流程：
+
+```powershell
+python clipboard_bridge.py begin-run
+python clipboard_bridge.py inspect --run-id RUN_ID --content-key "answer:123456"
+python clipboard_bridge.py ingest `
+  --run-id RUN_ID `
+  --activity-time "2026-09-13 21:08" `
+  --activity-action "赞同了回答" `
+  --author "作者名" `
+  --published-at "2026-09-12 20:01" `
+  --source-type "answer" `
+  --content-url "https://www.zhihu.com/question/1/answer/123456"
+python clipboard_bridge.py finish-run --run-id RUN_ID --boundary-hit
+```
+
+评论规则：评论不超过 30 条时尽量全部保存；更多时保存约一半，最多 200 条；默认只展开 3 条热门评论下的全部回复。必须继续检查到上次采集的重复内容，才能把本轮视为完整。
+
+完整界面步骤见 [Computer Use 工作流](docs/COMPUTER_USE_WORKFLOW.md)。
+
+## 两条通道如何避免重复
+
+数据库不以标题作为唯一判断，因为同一问题下的不同回答可能同名。系统优先使用：
 
 ```text
---url               知乎可滚动列表页 URL
---start-date        动态发生日期起点
---end-date          动态发生日期终点
---limit             最多保存多少篇；0 表示不限
---max-scrolls       最大滚动轮数
---output-dir        Markdown 输出目录
---debug-comments    只测试第一条动态的正文和评论
+answer:<回答 ID>
+article:<文章 ID>
 ```
 
-## 注意事项
+两条通道成功保存后都写入 `archive_items`。每轮从最新动态开始，把看到的内容记录到 `archive_runs`；只有命中旧边界或确认到达列表末尾时，才更新 `archive_frontier`。验证码、登录失效、数量上限和其他异常不会错误推进边界。
 
-- 时间过滤依据是“主页动态发生时间”，不是文章发布日期。
-- 程序只在主页动态流操作，不打开新的详情页。
-- 抓取大量历史动态会耗时较长，建议先用 `--limit 5` 测试。
-- 如果同一个输出目录用于多个知乎页面，建议为每个页面指定不同 `--output-dir`。
-- 本工具仅供个人学习和数据备份使用，请控制频率，避免对网站造成压力。
+## 输出格式
+
+通常文件名为：
+
+```text
+[YYYY-MM-DD_HH-MM] 标题.md
+```
+
+仅当同一分钟、同一标题发生真实路径冲突时增加伪秒：
+
+```text
+[YYYY-MM-DD_HH-MM-01] 标题.md
+```
+
+每篇 Markdown 使用统一 YAML 表头：
+
+```yaml
+---
+title: "问题或文章标题"
+author: "作者"
+activity_at: "2026-09-13 02:46"
+activity_action: "赞同了回答"
+published_at: "2025-07-10 17:40:56"
+source_url: "https://www.zhihu.com/question/.../answer/..."
+source_type: "answer"
+zhihu_answer_id: "123456"
+---
+```
+
+图片保存在 Markdown 同目录下的同名文件夹中，正文链接改为相对路径，便于整体复制到 Obsidian 或其他归档位置。
+
+## 旧文件补表头
+
+先执行 dry-run，只生成报告：
+
+```powershell
+python enrich_old_metadata.py --start-date 2023-01-01 --end-date 2026-05-31
+```
+
+确认 `metadata_reports/` 中的匹配结果后再写入：
+
+```powershell
+python enrich_old_metadata.py --start-date 2023-01-01 --end-date 2026-05-31 --apply
+```
+
+详见 [元数据补全说明](docs/METADATA_ENRICHMENT.md)。
+
+## 测试
+
+```powershell
+python -m unittest discover -s tests -v
+python -m py_compile zhihu_scraper.py clipboard_bridge.py init_login.py enrich_old_metadata.py zhihu_archive\content.py zhihu_archive\store.py maintenance\metadata_enrichment.py
+```
+
+更简短的本地命令清单见 [本地使用说明](docs/LOCAL_USAGE.md)。已确认但暂缓的结构改进见 [后续改进记录](docs/ROADMAP.md)。本工具仅用于个人数据备份，请控制访问频率并遵守平台规则。
