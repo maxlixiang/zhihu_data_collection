@@ -23,6 +23,8 @@ python zhihu_scraper.py --limit 30 --continue-to-boundary --max-new 200
 程序默认访问 `https://www.zhihu.com/people/li-xiang-57-76`，显示浏览器窗口，并把 Markdown、图片和数据库都保存在当前项目。正常结束条件是命中上轮边界。`--limit 30` 是预期量；如果 30 条后仍未命中边界，`--continue-to-boundary` 会让程序在同一浏览器会话内继续。`--max-new 200` 是安全硬上限；达到后仍未命中边界时，不会推进数据库边界。
 如果数据库还没有旧边界，首轮仍只处理 `--limit` 条，不会直接扩展到 200 条。
 
+对回答默认保存最多 30 条顶层评论，只处理前 2 条热门评论的回复，每条最多 10 条，合计最多附加 20 条回复。`--no-comments` 会同时关闭顶层评论和回复提取。
+
 可选参数：
 
 ```powershell

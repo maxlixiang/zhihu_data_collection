@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from zhihu_archive.store import (
     abort_run,
@@ -17,7 +18,63 @@ from zhihu_archive.store import (
     resolve_collision_title,
 )
 from clipboard_bridge import calculate_comment_target, extract_title_and_body, ingest
-from zhihu_scraper import resolve_incremental_new_limit, should_archive_action
+from zhihu_scraper import (
+    DEFAULT_HOT_COMMENT_LIMIT,
+    DEFAULT_REPLY_LIMIT_PER_COMMENT,
+    DEFAULT_ROOT_COMMENT_LIMIT,
+    fetch_first_page_comments_via_api,
+    format_comments_markdown,
+    resolve_incremental_new_limit,
+    should_archive_action,
+)
+
+
+class FakeCommentResponse:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self.status = status
+        self.ok = 200 <= status < 300
+
+    def json(self):
+        return self._payload
+
+    def text(self):
+        return ""
+
+
+class FakeCommentRequest:
+    def __init__(self, root_comments, replies_by_root):
+        self.root_comments = root_comments
+        self.replies_by_root = replies_by_root
+        self.urls = []
+
+    def get(self, url, headers=None):
+        self.urls.append(url)
+        if "/root_comments" in url:
+            query = parse_qs(urlparse(url).query)
+            limit = int(query["limit"][0])
+            offset = int(query["offset"][0])
+            return FakeCommentResponse(
+                {
+                    "data": self.root_comments[offset : offset + limit],
+                    "paging": {"is_end": offset + limit >= len(self.root_comments)},
+                }
+            )
+        root_id = url.split("/comments/", 1)[1].split("/", 1)[0]
+        return FakeCommentResponse(
+            {"data": self.replies_by_root.get(root_id, []), "paging": {"is_end": True}}
+        )
+
+
+class FakeCommentPage:
+    def __init__(self, root_comments, replies_by_root):
+        self.url = "https://www.zhihu.com/answer/123"
+        self.context = type("Context", (), {})()
+        self.context.request = FakeCommentRequest(root_comments, replies_by_root)
+        self.waits = []
+
+    def wait_for_timeout(self, milliseconds):
+        self.waits.append(milliseconds)
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
@@ -47,6 +104,65 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertEqual(calculate_comment_target(18), 18)
         self.assertEqual(calculate_comment_target(204), 102)
         self.assertEqual(calculate_comment_target(1000), 200)
+
+    def test_program_comment_limits_and_nested_replies(self):
+        self.assertEqual(DEFAULT_ROOT_COMMENT_LIMIT, 30)
+        self.assertEqual(DEFAULT_HOT_COMMENT_LIMIT, 2)
+        self.assertEqual(DEFAULT_REPLY_LIMIT_PER_COMMENT, 10)
+
+        def api_comment(comment_id, author, content, child_count=0, reply_to=""):
+            item = {
+                "id": comment_id,
+                "author": {"member": {"name": author}},
+                "content": content,
+                "child_comment_count": child_count,
+                "child_comments": [],
+            }
+            if reply_to:
+                item["reply_to_author"] = {"member": {"name": reply_to}}
+            return item
+
+        roots = [
+            api_comment("root-1", "热门甲", "顶层甲", child_count=12),
+            api_comment("root-2", "热门乙", "顶层乙", child_count=11),
+            api_comment("root-3", "普通丙", "顶层丙", child_count=8),
+        ] + [
+            api_comment(f"root-{i}", f"普通{i}", f"顶层{i}")
+            for i in range(4, 36)
+        ]
+        replies = {
+            "root-1": [
+                api_comment(f"reply-1-{i}", f"回复甲{i}", f"内容甲{i}", reply_to="热门甲")
+                for i in range(12)
+            ],
+            "root-2": [
+                api_comment(f"reply-2-{i}", f"回复乙{i}", f"内容乙{i}", reply_to="热门乙")
+                for i in range(11)
+            ],
+            "root-3": [
+                api_comment(f"reply-3-{i}", f"回复丙{i}", f"内容丙{i}", reply_to="普通丙")
+                for i in range(8)
+            ],
+        }
+        page = FakeCommentPage(roots, replies)
+        comments = fetch_first_page_comments_via_api(page, "123")
+
+        self.assertEqual(len(comments), 30)
+        self.assertEqual(len(comments[0]["replies"]), 10)
+        self.assertEqual(len(comments[1]["replies"]), 10)
+        self.assertEqual(comments[2]["replies"], [])
+        root_urls = [url for url in page.context.request.urls if "/root_comments" in url]
+        self.assertEqual(len(root_urls), 2)
+        self.assertIn("limit=20&offset=0", root_urls[0])
+        self.assertIn("limit=10&offset=20", root_urls[1])
+        self.assertEqual(len(page.context.request.urls), 4)
+        self.assertNotIn("root-3/child_comments", "\n".join(page.context.request.urls))
+
+        rendered = format_comments_markdown(comments)
+        self.assertIn("最多 30 条", rendered)
+        self.assertIn("↳ **回复甲0** 回复 **热门甲**", rendered)
+        self.assertNotIn("回复甲10", rendered)
+        self.assertNotIn("回复丙1", rendered)
 
     def test_supported_activity_actions(self):
         for action in ("赞同了回答", "发布了文章", "发表了想法", "收藏了回答", "喜欢了文章"):
