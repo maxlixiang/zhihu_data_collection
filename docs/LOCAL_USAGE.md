@@ -17,18 +17,22 @@ python init_login.py
 ## 日常增量采集
 
 ```powershell
-python zhihu_scraper.py --limit 30
+python zhihu_scraper.py --limit 30 --continue-to-boundary --max-new 200
 ```
 
-程序默认访问 `https://www.zhihu.com/people/li-xiang-57-76`，显示浏览器窗口，并把 Markdown、图片和数据库都保存在当前项目。正常结束条件是命中上轮边界；如果新内容超过 `--limit`，可再次执行，已保存内容会由共享数据库跳过。
+程序默认访问 `https://www.zhihu.com/people/li-xiang-57-76`，显示浏览器窗口，并把 Markdown、图片和数据库都保存在当前项目。正常结束条件是命中上轮边界。`--limit 30` 是预期量；如果 30 条后仍未命中边界，`--continue-to-boundary` 会让程序在同一浏览器会话内继续。`--max-new 200` 是安全硬上限；达到后仍未命中边界时，不会推进数据库边界。
+如果数据库还没有旧边界，首轮仍只处理 `--limit` 条，不会直接扩展到 200 条。
 
 可选参数：
 
 ```powershell
+python zhihu_scraper.py --limit 30
 python zhihu_scraper.py --limit 30 --no-comments
 python zhihu_scraper.py --limit 30 --headless
 python zhihu_scraper.py --limit 30 --db-file ".\zhihu_articles.db" --state-file ".\state.json"
 ```
+
+不加 `--continue-to-boundary` 时，`--limit` 仍是原来的硬上限。
 
 ## 历史回溯
 

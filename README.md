@@ -78,10 +78,10 @@ python init_login.py
 
 ## 方式一：Playwright 程序采集
 
-日常手动采集最多 30 篇：
+日常手动采集建议使用“边界优先”模式：
 
 ```powershell
-python zhihu_scraper.py --limit 30
+python zhihu_scraper.py --limit 30 --continue-to-boundary --max-new 200
 ```
 
 默认行为：
@@ -92,15 +92,20 @@ python zhihu_scraper.py --limit 30
 - 使用根目录的 `zhihu_articles.db` 去重；
 - 对回答保存第一页最多 15 条有效评论；
 - 命中上一次成功采集的边界后正常结束；
-- 若达到数量上限但没有命中边界，本轮标记为不完整，下次继续。
+- `--limit 30` 是日常预期量；加上 `--continue-to-boundary` 后，30 条时未命中旧边界就会在同一浏览器会话中继续；
+- `--max-new 200` 是绝对安全上限；到达上限仍未命中边界时，本轮标记为不完整，不推进边界。
+- 如果数据库尚未建立旧边界，首轮仍只采集 `--limit` 条，用来安全建立初始边界。
 
 常用选项：
 
 ```powershell
+python zhihu_scraper.py --limit 30
 python zhihu_scraper.py --limit 30 --no-comments
 python zhihu_scraper.py --limit 30 --headless
 python zhihu_scraper.py --limit 30 --url "https://www.zhihu.com/people/li-xiang-57-76"
 ```
+
+不加 `--continue-to-boundary` 时，`--limit` 仍是原有的硬上限，因此旧命令保持兼容。边界优先模式不会增加并发，也不会重新打开浏览器；它只是在当前页面中继续串行向下扫描。
 
 `--headless` 只控制是否显示浏览器，不会改变保存格式。考虑到风控，建议人工触发、控制频率；检测到登录页、安全验证、页面结构异常或连续滚动无增长时，程序会停止并生成 `zhihu_last_*.png`，不会持续重试。
 
@@ -124,7 +129,7 @@ python zhihu_scraper.py --help
 
 该方式不修改“知乎备份剪藏”油猴插件。Computer Use 负责打开主页、加载适量评论并点击“复制为 Markdown”；`clipboard_bridge.py` 负责把剪贴板内容转换成与程序采集完全一致的文件结构，并登记到共享数据库。
 
-桥接程序会在写文件前检查作者、动态时间、动态动作、发布时间、来源链接和内容类型；任何必需字段缺失都会停止，不生成不完整归档。
+桥接程序会在写文件前检查作者、动态时间、动态动作、发布时间、来源链接和内容类型；任何必需字段缺失都会停止，不生成不完整归档。Computer Use 还应传入页面的完整标题，桥接程序会拒绝标题不匹配的旧剪贴板内容。
 
 桥接流程：
 
@@ -138,7 +143,8 @@ python clipboard_bridge.py ingest `
   --author "作者名" `
   --published-at "2026-09-12 20:01" `
   --source-type "answer" `
-  --content-url "https://www.zhihu.com/question/1/answer/123456"
+  --content-url "https://www.zhihu.com/question/1/answer/123456" `
+  --expected-title "页面上的完整标题"
 python clipboard_bridge.py finish-run --run-id RUN_ID --boundary-hit
 ```
 

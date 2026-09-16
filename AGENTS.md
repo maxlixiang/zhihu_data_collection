@@ -35,6 +35,7 @@ state.json                             登录态
 
 ```powershell
 python zhihu_scraper.py --limit 30
+python zhihu_scraper.py --limit 30 --continue-to-boundary --max-new 200
 python clipboard_bridge.py --help
 python init_login.py
 python enrich_old_metadata.py --help
@@ -67,6 +68,10 @@ python enrich_old_metadata.py --help
 ## Playwright 与风控
 
 - 默认显示浏览器；命令带 `--headless` 时才隐藏。
+- `--limit` 在普通模式下是硬上限；只有显式使用 `--continue-to-boundary` 时才是软限制。
+- 边界优先模式必须同时受 `--max-new` 硬上限保护；到达上限仍未命中旧边界时必须以不完整状态结束，不得推进 `archive_frontier`。
+- 没有旧边界的首轮采集不得扩展到 `--max-new`，必须仍以 `--limit` 建立初始边界。
+- 继续到边界时复用当前浏览器会话并保持串行，不重新从顶部扫描，不增加并发。
 - 保留随机短等待，不增加高并发、并行分页或激进重试。
 - 检测到安全验证、登录页、零动态卡片或滚动停滞时立即停止，并保留 `zhihu_last_*.png`。
 - 不尝试绕过验证码、平台访问限制或登录验证。

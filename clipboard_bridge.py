@@ -116,9 +116,20 @@ def unquote_frontmatter_value(value: str | None) -> str:
     return value
 
 
+def normalize_title_for_comparison(value: str) -> str:
+    return re.sub(r"\s+", "", value).strip().rstrip("。！？.!?")
+
+
 def ingest(args: argparse.Namespace) -> dict:
     raw_markdown = load_markdown(args)
     title, body, metadata = extract_title_and_body(raw_markdown, args.title)
+    expected_title = getattr(args, "expected_title", None)
+    if expected_title and normalize_title_for_comparison(title) != normalize_title_for_comparison(
+        expected_title
+    ):
+        raise ValueError(
+            f"剪贴板标题与当前页面不匹配：剪贴板={title!r}，当前页面={expected_title!r}"
+        )
     source_url = args.content_url or unquote_frontmatter_value(
         metadata.get("source_url") or metadata.get("url")
     )
@@ -228,6 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("--content-url")
     ingest_parser.add_argument("--content-key")
     ingest_parser.add_argument("--title")
+    ingest_parser.add_argument("--expected-title")
     ingest_parser.add_argument("--author")
     ingest_parser.add_argument("--activity-action")
     ingest_parser.add_argument("--published-at")

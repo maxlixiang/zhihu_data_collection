@@ -51,7 +51,7 @@ python clipboard_bridge.py inspect --run-id RUN_ID --content-key "answer:123456"
 11. 调用桥接程序；活动时间必须使用赞同动态时间而非回答发布时间：
 
 ```powershell
-python clipboard_bridge.py ingest --run-id RUN_ID --activity-time "2026-09-13 21:08" --activity-action "赞同了回答" --author "作者名" --published-at "2026-09-12 20:01" --source-type "answer" --content-url "https://www.zhihu.com/question/1/answer/2"
+python clipboard_bridge.py ingest --run-id RUN_ID --activity-time "2026-09-13 21:08" --activity-action "赞同了回答" --author "作者名" --published-at "2026-09-12 20:01" --source-type "answer" --content-url "https://www.zhihu.com/question/1/answer/2" --expected-title "页面上的完整标题"
 ```
 
 12. 只有返回 `status=saved` 后才进入下一条。

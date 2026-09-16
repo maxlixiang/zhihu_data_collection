@@ -17,7 +17,7 @@ from zhihu_archive.store import (
     resolve_collision_title,
 )
 from clipboard_bridge import calculate_comment_target, extract_title_and_body, ingest
-from zhihu_scraper import should_archive_action
+from zhihu_scraper import resolve_incremental_new_limit, should_archive_action
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
@@ -52,6 +52,15 @@ class ArchiveWorkflowTests(unittest.TestCase):
         for action in ("赞同了回答", "发布了文章", "发表了想法", "收藏了回答", "喜欢了文章"):
             self.assertTrue(should_archive_action(action), action)
         self.assertFalse(should_archive_action("关注了用户"))
+
+    def test_incremental_limit_modes(self):
+        self.assertEqual(resolve_incremental_new_limit(30), 30)
+        self.assertEqual(resolve_incremental_new_limit(30, True, 200), 200)
+        self.assertEqual(resolve_incremental_new_limit(30, True, 200, False), 30)
+        with self.assertRaisesRegex(ValueError, "--max-new 不能小于 --limit"):
+            resolve_incremental_new_limit(30, True, 20)
+        with self.assertRaisesRegex(ValueError, "--limit 必须大于 0"):
+            resolve_incremental_new_limit(0)
 
     def test_collision_only_adds_seconds_when_needed(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -128,6 +137,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
                     input_file=str(source),
                     stdin=False,
                     title=None,
+                    expected_title="稳定标题",
                     author="示例作者",
                     activity_action="赞同了回答",
                     published_at="2026-09-12 20:01",
@@ -167,11 +177,39 @@ class ArchiveWorkflowTests(unittest.TestCase):
                         input_file=str(source),
                         stdin=False,
                         title=None,
+                        expected_title="示例标题",
                         author=None,
                         activity_action="赞同了回答",
                         published_at="2026-09-12 20:01",
                         source_type="answer",
                         content_url="https://www.zhihu.com/question/10/answer/21",
+                        content_key=None,
+                        activity_time="2026-09-13 21:08",
+                        db_file=str(Path(temp_dir, "archive.db")),
+                        output_dir=str(output_dir),
+                        allow_remote_images=False,
+                        run_id=None,
+                    )
+                )
+            self.assertEqual(list(output_dir.rglob("*.md")), [])
+
+    def test_bridge_rejects_stale_clipboard_title(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir, "copied.md")
+            source.write_text("旧剪贴板标题\n\n旧内容\n", encoding="utf-8")
+            output_dir = Path(temp_dir, "articles")
+            with self.assertRaisesRegex(ValueError, "剪贴板标题与当前页面不匹配"):
+                ingest(
+                    Namespace(
+                        input_file=str(source),
+                        stdin=False,
+                        title=None,
+                        expected_title="当前知乎标题",
+                        author="示例作者",
+                        activity_action="赞同了回答",
+                        published_at="2026-09-12 20:01",
+                        source_type="answer",
+                        content_url="https://www.zhihu.com/question/10/answer/22",
                         content_key=None,
                         activity_time="2026-09-13 21:08",
                         db_file=str(Path(temp_dir, "archive.db")),

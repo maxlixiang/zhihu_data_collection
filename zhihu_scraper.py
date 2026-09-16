@@ -556,12 +556,29 @@ def run_debug_comments(url: str | None = None, headed: bool = False):
             context.close()
             browser.close()
 
+def resolve_incremental_new_limit(
+    limit: int,
+    continue_to_boundary: bool = False,
+    max_new: int = 200,
+    has_boundary: bool = True,
+) -> int:
+    if limit <= 0:
+        raise ValueError("日常增量采集的 --limit 必须大于 0")
+    if max_new <= 0:
+        raise ValueError("--max-new 必须大于 0")
+    if continue_to_boundary and max_new < limit:
+        raise ValueError("使用 --continue-to-boundary 时，--max-new 不能小于 --limit")
+    return max_new if continue_to_boundary and has_boundary else limit
+
+
 def run_zhihu_scraper(
     limit=20,
     progress_callback=None,
     url: str | None = None,
     headed: bool = True,
     include_comments: bool = True,
+    continue_to_boundary: bool = False,
+    max_new: int = 200,
 ):
     if md is None:
         raise RuntimeError("缺少依赖 markdownify。请先运行: pip install -r requirements.txt")
@@ -569,6 +586,7 @@ def run_zhihu_scraper(
     init_db()
     newly_scraped_titles = []
     collected_count = 0
+    soft_limit_reported = False
 
     display_mode = "可见" if headed else "无头"
     print(f"\n🚀 [Scraper] 正在启动{display_mode}浏览器...")
@@ -588,6 +606,17 @@ def run_zhihu_scraper(
         target_url = normalize_target_url(url)
         archive_run = archive_store.begin_run(DB_FILE, target_url, "playwright")
         archive_run_id = archive_run["run_id"]
+        boundary_extension_active = continue_to_boundary and bool(archive_run["boundary_keys"])
+        effective_limit = resolve_incremental_new_limit(
+            limit,
+            continue_to_boundary,
+            max_new,
+            has_boundary=bool(archive_run["boundary_keys"]),
+        )
+        if continue_to_boundary and not archive_run["boundary_keys"]:
+            print(
+                f"ℹ️ [Scraper] 当前没有旧边界，本轮仍按 --limit {limit} 采集并建立初始边界。"
+            )
         print(f"👉 [Scraper] 访问知乎页面: {target_url}")
         try:
             page.goto(target_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
@@ -616,7 +645,7 @@ def run_zhihu_scraper(
         last_item_count = 0
         last_scroll_height = 0
 
-        while collected_count < limit:
+        while collected_count < effective_limit:
             blocked_reason = detect_blocked_zhihu_page(page)
             if blocked_reason:
                 safe_page_snapshot(page, "blocked-during-scroll")
@@ -636,7 +665,8 @@ def run_zhihu_scraper(
             found_new_in_this_loop = False
 
             for i in range(current_count):
-                if collected_count >= limit: break
+                if collected_count >= effective_limit:
+                    break
                 item = items.nth(i)
 
                 try:
@@ -717,7 +747,8 @@ def run_zhihu_scraper(
                     clean_title_str = archive_store.resolve_collision_title(save_dir, time_str, title)
 
                 print(f"\n[Scraper] 处理新动态：{clean_title_str}")
-                if progress_callback: progress_callback(collected_count + 1, limit, clean_title_str)
+                if progress_callback:
+                    progress_callback(collected_count + 1, effective_limit, clean_title_str)
 
                 item.scroll_into_view_if_needed()
                 time.sleep(random.uniform(0.5, 1.2))
@@ -775,6 +806,17 @@ def run_zhihu_scraper(
                 archive_store.increment_run_new_count(DB_FILE, archive_run_id)
                 newly_scraped_titles.append(clean_title_str)
                 collected_count += 1
+                if (
+                    boundary_extension_active
+                    and not soft_limit_reported
+                    and collected_count >= limit
+                    and collected_count < effective_limit
+                ):
+                    print(
+                        f"⚠️ [Scraper] 已达到预期数量 {limit}，但尚未命中旧边界，"
+                        f"将继续扫描（安全上限 {max_new}）……"
+                    )
+                    soft_limit_reported = True
 
             if not found_new_in_this_loop:
                 scroll_attempts += 1
@@ -808,7 +850,15 @@ def run_zhihu_scraper(
                 stale_scrolls = 0
 
         result = archive_store.finish_run(DB_FILE, archive_run_id)
-        print(f"⚠️ [Scraper] 已达到数量上限，未命中旧边界时不视为完整采集: {result}")
+        if result["status"] == "complete":
+            print(f"✅ [Scraper] 已建立初始采集边界: {result}")
+        elif boundary_extension_active:
+            print(
+                f"⚠️ [Scraper] 已达到安全上限 {max_new}，"
+                f"仍未命中旧边界，本轮不视为完整采集: {result}"
+            )
+        else:
+            print(f"⚠️ [Scraper] 已达到数量上限，未命中旧边界时不视为完整采集: {result}")
         browser.close()
     return newly_scraped_titles
 
@@ -1164,6 +1214,17 @@ if __name__ == "__main__":
         help="正常抓取模式下最多处理的新动态数量，默认 5",
     )
     parser.add_argument(
+        "--continue-to-boundary",
+        action="store_true",
+        help="达到 --limit 后若尚未命中旧边界，继续采集到边界或 --max-new",
+    )
+    parser.add_argument(
+        "--max-new",
+        type=int,
+        default=200,
+        help="继续到旧边界模式的新内容安全上限，默认 200",
+    )
+    parser.add_argument(
         "--url",
         default=None,
         help="知乎可滚动列表页 URL，例如个人主页、回答页、文章页、收藏夹页等",
@@ -1198,6 +1259,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     configure_runtime_paths(args.output_dir, args.db_file, args.state_file)
 
+    if not args.backfill_local and not args.debug_comments:
+        try:
+            resolve_incremental_new_limit(
+                args.limit,
+                args.continue_to_boundary,
+                args.max_new,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+
     if args.debug_comments:
         raise SystemExit(run_debug_comments(url=args.url, headed=not args.headless))
     if args.backfill_local:
@@ -1225,4 +1296,6 @@ if __name__ == "__main__":
             url=args.url,
             headed=not args.headless,
             include_comments=not args.no_comments,
+            continue_to_boundary=args.continue_to_boundary,
+            max_new=args.max_new,
         ))
