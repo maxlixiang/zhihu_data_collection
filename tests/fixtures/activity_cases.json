@@ -1,0 +1,29 @@
+[
+  {
+    "name": "answer",
+    "action": "赞同了回答",
+    "meta_text": "赞同了回答 2026-09-17 08:30",
+    "url": "https://www.zhihu.com/question/100/answer/200",
+    "content_type": "answer",
+    "content_id": "200",
+    "content_key": "answer:200"
+  },
+  {
+    "name": "article",
+    "action": "发布了文章",
+    "meta_text": "发布了文章 2026-09-16 21:05",
+    "url": "https://zhuanlan.zhihu.com/p/300",
+    "content_type": "article",
+    "content_id": "300",
+    "content_key": "article:300"
+  },
+  {
+    "name": "unsupported",
+    "action": "关注了用户",
+    "meta_text": "关注了用户 2026-09-15 10:00",
+    "url": "https://www.zhihu.com/people/example",
+    "content_type": null,
+    "content_id": null,
+    "content_key": null
+  }
+]

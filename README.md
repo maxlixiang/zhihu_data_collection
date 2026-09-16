@@ -29,6 +29,15 @@ zhihu_data_collection-playwright技术/
 ├── clipboard_bridge.py           Computer Use 剪贴板桥接入口
 ├── init_login.py                 生成 Playwright 登录态
 ├── enrich_old_metadata.py        旧 Markdown 表头补全入口
+├── playwright_adapter/           Playwright 页面与采集实现
+│   ├── config.py                 运行路径和配置
+│   ├── page_detection.py         登录、风控和页面异常检测
+│   ├── activity_parser.py        动态元数据、稳定 ID 和时间解析
+│   ├── comments.py               顶层评论、回复和 Markdown 格式化
+│   ├── exporter.py               单条动态的正文、图片、YAML 和入库桥接
+│   ├── incremental.py            日常增量扫描和边界控制
+│   ├── backfill.py               历史日期区间回溯
+│   └── debug.py                  只读评论调试
 ├── zhihu_archive/                两条通道共用的核心实现
 │   ├── content.py                文件名、YAML、图片本地化
 │   └── store.py                  SQLite、稳定 ID、采集边界
@@ -42,13 +51,14 @@ zhihu_data_collection-playwright技术/
 └── AGENTS.md                     给 Codex/其他 AI 的维护约束
 ```
 
-根目录保留可直接运行的脚本，避免改变既有使用习惯；共享规则集中在 `zhihu_archive/`，避免两个采集通道各维护一套逻辑。
+根目录保留可直接运行的稳定入口；`zhihu_scraper.py` 只负责命令行参数和旧 API 兼容转发。Playwright 细节集中在 `playwright_adapter/`，两种采集通道的保存规则则集中在 `zhihu_archive/`。
 
 ```mermaid
 flowchart LR
-    Z[知乎个人主页] --> P[Playwright 采集]
+    Z[知乎个人主页] --> P[zhihu_scraper 入口]
+    P --> A[playwright_adapter]
     Z --> C[Computer Use + 油猴插件]
-    P --> K[zhihu_archive 共享核心]
+    A --> K[zhihu_archive 共享核心]
     C --> B[clipboard_bridge]
     B --> K
     K --> D[(zhihu_articles.db)]

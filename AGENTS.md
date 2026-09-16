@@ -15,10 +15,18 @@
 ## 目录职责
 
 ```text
-zhihu_scraper.py                       Playwright CLI 与页面提取
+zhihu_scraper.py                       Playwright CLI 与旧 API 兼容外壳
 clipboard_bridge.py                    剪贴板桥接 CLI
 init_login.py                          Playwright 登录态初始化
 enrich_old_metadata.py                 元数据补全 CLI 包装
+playwright_adapter/config.py           运行路径与显式配置
+playwright_adapter/page_detection.py   登录、风控与页面异常
+playwright_adapter/activity_parser.py  动态卡片、元数据与稳定 ID
+playwright_adapter/comments.py         评论 API、回复与 Markdown
+playwright_adapter/exporter.py         单条动态导出和入库桥接
+playwright_adapter/incremental.py      日常增量扫描与边界
+playwright_adapter/backfill.py         历史回溯
+playwright_adapter/debug.py            只读评论调试
 zhihu_archive/content.py               YAML、文件名、图片本地化
 zhihu_archive/store.py                 数据库、去重、运行状态、边界
 maintenance/metadata_enrichment.py     旧 Markdown 匹配和补全
@@ -97,14 +105,15 @@ python enrich_old_metadata.py --help
 - 新增数据库字段要向后兼容现有数据库，不破坏旧 `articles` 表。
 - 文件写入与数据库登记应保持“文件成功后入库”的顺序。
 - 修改行为后同步更新 `README.md`、相关 `docs/` 和测试。
-- `zhihu_scraper.py` 的计划拆分方案记录在 `docs/ROADMAP.md`；在页面测试夹具完善前不要进行一次性大拆分。
+- `zhihu_scraper.py` 必须保持为稳定兼容入口；新的 Playwright 逻辑放入对应 `playwright_adapter/` 模块，不得再堆回入口文件。
+- 典型动态结构化夹具位于 `tests/fixtures/`；页面选择器变更时应同步增加或更新夹具和离线测试。
 
 ## 验证
 
 至少执行：
 
 ```powershell
-python -m py_compile zhihu_scraper.py clipboard_bridge.py init_login.py enrich_old_metadata.py zhihu_archive\content.py zhihu_archive\store.py maintenance\metadata_enrichment.py
+python -m compileall -q zhihu_scraper.py clipboard_bridge.py init_login.py enrich_old_metadata.py zhihu_archive playwright_adapter maintenance
 python -m unittest discover -s tests -v
 python zhihu_scraper.py --help
 python clipboard_bridge.py --help

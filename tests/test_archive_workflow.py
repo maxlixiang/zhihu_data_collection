@@ -1,7 +1,10 @@
 import os
+import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from argparse import Namespace
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -18,12 +21,16 @@ from zhihu_archive.store import (
     resolve_collision_title,
 )
 from clipboard_bridge import calculate_comment_target, extract_title_and_body, ingest
+from playwright_adapter.config import RuntimeConfig
+from playwright_adapter.exporter import export_activity_item
+from playwright_adapter.page_detection import detect_blocked_zhihu_page
 from zhihu_scraper import (
     DEFAULT_HOT_COMMENT_LIMIT,
     DEFAULT_REPLY_LIMIT_PER_COMMENT,
     DEFAULT_ROOT_COMMENT_LIMIT,
     fetch_first_page_comments_via_api,
     format_comments_markdown,
+    parse_activity_time,
     resolve_incremental_new_limit,
     should_archive_action,
 )
@@ -77,7 +84,121 @@ class FakeCommentPage:
         self.waits.append(milliseconds)
 
 
+class FakeExportLocator:
+    def __init__(self, *, count=0, html=""):
+        self._count = count
+        self._html = html
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return self._count
+
+    def inner_html(self):
+        return self._html
+
+    def evaluate(self, script):
+        return None
+
+
+class FakeExportItem:
+    def scroll_into_view_if_needed(self):
+        return None
+
+    def locator(self, selector):
+        if "button:has-text" in selector:
+            return FakeExportLocator(count=0)
+        if ".RichContent-inner" in selector:
+            return FakeExportLocator(count=1, html="<p>正文内容</p>")
+        return FakeExportLocator(count=0)
+
+    def evaluate(self, script):
+        return {
+            "author": "测试作者",
+            "published_at": "发布于 2026-09-16 20:00",
+            "edited_at": "",
+            "source_url": "https://www.zhihu.com/question/1/answer/2",
+            "source_type": "answer",
+            "answer_id": "2",
+            "date_created": "",
+            "date_modified": "",
+        }
+
+
+class FakeDiagnosticPage:
+    def __init__(self, title, url):
+        self._title = title
+        self.url = url
+
+    def title(self):
+        return self._title
+
+
 class ArchiveWorkflowTests(unittest.TestCase):
+    def test_page_detection_for_login_and_security_challenge(self):
+        login = detect_blocked_zhihu_page(
+            FakeDiagnosticPage("登录 - 知乎", "https://www.zhihu.com/signin")
+        )
+        blocked = detect_blocked_zhihu_page(
+            FakeDiagnosticPage("安全验证", "https://www.zhihu.com/account/unhuman")
+        )
+        normal = detect_blocked_zhihu_page(
+            FakeDiagnosticPage("个人主页", "https://www.zhihu.com/people/test")
+        )
+        self.assertIn("登录态可能失效", login)
+        self.assertIn("安全验证", blocked)
+        self.assertEqual(normal, "")
+
+    def test_structured_activity_fixtures(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "activity_cases.json"
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                self.assertEqual(should_archive_action(case["action"]), case["name"] != "unsupported")
+                activity_at, time_str = parse_activity_time(case["meta_text"])
+                self.assertIsNotNone(activity_at)
+                self.assertTrue(time_str.startswith("[2026-09-"))
+                identity = content_identity_from_url(case["url"])
+                self.assertEqual(identity, (case["content_type"], case["content_id"], case["content_key"]))
+
+    def test_shared_exporter_writes_expected_markdown(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = RuntimeConfig(
+                project_dir=temp_dir,
+                default_url="https://www.zhihu.com/people/test",
+                archive_root_dir=temp_dir,
+                local_archive_root_dir=temp_dir,
+                db_file=str(Path(temp_dir, "archive.db")),
+                state_file=str(Path(temp_dir, "state.json")),
+            )
+            identity = {
+                "content_type": "answer",
+                "content_id": "2",
+                "content_key": "answer:2",
+                "url": "https://www.zhihu.com/question/1/answer/2",
+            }
+            with patch("playwright_adapter.exporter.time.sleep"):
+                path = export_activity_item(
+                    config,
+                    page=None,
+                    item=FakeExportItem(),
+                    title="测试标题",
+                    clean_title_str="[2026-09-17_08-30] 测试标题",
+                    save_dir=temp_dir,
+                    activity_dt=datetime(2026, 9, 17, 8, 30),
+                    action_text="赞同了回答",
+                    content_identity=identity,
+                    include_comments=False,
+                )
+            saved = Path(path).read_text(encoding="utf-8")
+            self.assertIn('title: "测试标题"', saved)
+            self.assertIn('author: "测试作者"', saved)
+            self.assertIn('zhihu_answer_id: "2"', saved)
+            self.assertIn("# 测试标题", saved)
+            self.assertIn("正文内容", saved)
+
     def test_content_identity(self):
         self.assertEqual(
             content_identity_from_url("https://www.zhihu.com/question/123/answer/456?utm=x"),
