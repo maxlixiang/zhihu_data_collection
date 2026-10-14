@@ -59,3 +59,14 @@ python enrich_old_metadata.py --start-date 2023-01-01 --end-date 2026-05-31 --ap
 ## 异常处理
 
 出现安全验证、登录页、找不到动态卡片或连续滚动无增长时，采集会停止，并在项目根目录生成 `zhihu_last_*.png`。处理验证或重新生成登录态后再运行，不要在异常页面上连续重试。
+
+
+## 登录失效时在当前窗口继续（2026-10-14）
+
+正常Playwright采集可加 `--interactive-login`：
+
+```powershell
+python zhihu_scraper.py --limit 30 --continue-to-boundary --max-new 200 --interactive-login
+```
+
+程序先验证目标页面登录及动态列表。凭证缺失、损坏或跳转登录页时，在当前可见浏览器完成人工登录，再回到PowerShell按 Enter；程序重新验证并保存凭证，成功后复用当前会话继续。输入 q 或按 Ctrl+C 可取消。登录页或安全验证页面会保持打开，无等待倒计时；提前按 Enter 但仍未完成时继续等待。只允许本人在网页上手动完成验证，不自动解题或绕过验证。网络异常、动态列表异常或非交互终端时停止。登录检查失败返回退出码3，采集中途报错返回2；`--interactive-login` 不能与 `--headless` 同用。已有 `init_login.py` 和原命令仍可使用。

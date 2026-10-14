@@ -17,6 +17,7 @@ from .activity_parser import (
     should_archive_action,
 )
 from .config import RuntimeConfig
+from .login import create_login_context, ensure_logged_in
 from .console import safe_print as print
 from .exporter import (
     export_activity_item,
@@ -57,9 +58,9 @@ def run_incremental(
     include_comments: bool = True,
     continue_to_boundary: bool = False,
     max_new: int = 200,
+    interactive_login: bool = False,
 ):
     require_markdownify()
-    init_db(config)
     newly_scraped_titles = []
     collected_count = 0
     soft_limit_reported = False
@@ -68,48 +69,23 @@ def run_incremental(
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=not headed)
-        if not os.path.exists(config.state_file):
-            print(f"❌ 找不到登录凭证: {config.state_file}")
-            return ["[报错] 缺失 state.json 登录凭证"]
-        context = browser.new_context(
-            viewport={"width": 1366, "height": 768},
-            storage_state=config.state_file,
-            timezone_id="Asia/Shanghai",
-        )
-        page = context.new_page()
-        target_url = normalize_target_url(url, config.default_url)
+        try:
+            context, login_needed = create_login_context(browser, config, headed=headed, interactive=interactive_login)
+            page = context.new_page()
+            target_url = normalize_target_url(url, config.default_url)
+            ensure_logged_in(page, context, config, target_url, headed=headed, interactive=interactive_login, login_needed=login_needed)
+        except BaseException:
+            browser.close()
+            raise
+        # 登录验证完成后才初始化归档数据库并创建采集记录。
+        init_db(config)
         archive_run = archive_store.begin_run(config.db_file, target_url, "playwright")
         archive_run_id = archive_run["run_id"]
         boundary_extension_active = continue_to_boundary and bool(archive_run["boundary_keys"])
-        effective_limit = resolve_incremental_new_limit(
-            limit,
-            continue_to_boundary,
-            max_new,
-            has_boundary=bool(archive_run["boundary_keys"]),
-        )
+        effective_limit = resolve_incremental_new_limit(limit, continue_to_boundary, max_new,
+                                                        has_boundary=bool(archive_run["boundary_keys"]))
         if continue_to_boundary and not archive_run["boundary_keys"]:
             print(f"ℹ️ [Scraper] 当前没有旧边界，本轮仍按 --limit {limit} 采集并建立初始边界。")
-        print(f"👉 [Scraper] 访问知乎页面: {target_url}")
-        try:
-            page.goto(target_url, wait_until="domcontentloaded", timeout=config.page_load_timeout_ms)
-        except Exception as first_error:
-            print(f"⚠️ [Scraper] 首次加载失败，准备重试: {str(first_error)[:160]}")
-            time.sleep(3)
-            try:
-                page.goto(target_url, wait_until="domcontentloaded", timeout=config.page_load_timeout_ms)
-            except Exception as second_error:
-                safe_page_snapshot(page, "page-load-failed", config.project_dir)
-                archive_store.abort_run(config.db_file, archive_run_id, "页面连续两次加载失败")
-                browser.close()
-                return [f"[报错] 页面加载失败: {str(second_error)[:160]}"]
-
-        time.sleep(4)
-        blocked_reason = detect_blocked_zhihu_page(page)
-        if blocked_reason:
-            safe_page_snapshot(page, "blocked-or-login", config.project_dir)
-            archive_store.abort_run(config.db_file, archive_run_id, blocked_reason)
-            browser.close()
-            return [f"[报错] {blocked_reason}"]
 
         consecutive_exists_count = 0
         scroll_attempts = 0

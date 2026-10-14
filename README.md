@@ -231,3 +231,14 @@ python -m py_compile zhihu_scraper.py clipboard_bridge.py init_login.py enrich_o
 ```
 
 更简短的本地命令清单见 [本地使用说明](docs/LOCAL_USAGE.md)。已确认但暂缓的结构改进见 [后续改进记录](docs/ROADMAP.md)。本工具仅用于个人数据备份，请控制访问频率并遵守平台规则。
+
+
+## 登录失效时在当前窗口继续（2026-10-14）
+
+正常Playwright采集可加 `--interactive-login`：
+
+```powershell
+python zhihu_scraper.py --limit 30 --continue-to-boundary --max-new 200 --interactive-login
+```
+
+程序先验证目标页面登录及动态列表。凭证缺失、损坏或跳转登录页时，在当前可见浏览器完成人工登录，再回到PowerShell按 Enter；程序重新验证并保存凭证，成功后复用当前会话继续。输入 q 或按 Ctrl+C 可取消。登录页或安全验证页面会保持打开，无等待倒计时；提前按 Enter 但仍未完成时继续等待。只允许本人在网页上手动完成验证，不自动解题或绕过验证。网络异常、动态列表异常或非交互终端时停止。登录检查失败返回退出码3，采集中途报错返回2；`--interactive-login` 不能与 `--headless` 同用。已有 `init_login.py` 和原命令仍可使用。

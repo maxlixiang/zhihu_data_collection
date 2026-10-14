@@ -58,6 +58,7 @@ from playwright_adapter.exporter import (
     save_article_to_db as _save_article_to_db,
 )
 from playwright_adapter.incremental import resolve_incremental_new_limit, run_incremental
+from playwright_adapter.login import LoginPreflightError
 from playwright_adapter.page_detection import (
     detect_blocked_zhihu_page,
     get_page_diagnostics,
@@ -144,6 +145,7 @@ def run_zhihu_scraper(
     include_comments: bool = True,
     continue_to_boundary: bool = False,
     max_new: int = 200,
+    interactive_login: bool = False,
 ):
     return run_incremental(
         _runtime_config,
@@ -154,6 +156,7 @@ def run_zhihu_scraper(
         include_comments=include_comments,
         continue_to_boundary=continue_to_boundary,
         max_new=max_new,
+        interactive_login=interactive_login,
     )
 
 
@@ -213,6 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db-file", default=DB_FILE, help="共享去重数据库路径")
     parser.add_argument("--state-file", default=STATE_FILE, help="Playwright 登录态文件路径")
     parser.add_argument("--headless", action="store_true", help="使用无头浏览器；默认显示浏览器窗口")
+    parser.add_argument("--interactive-login", action="store_true", help="登录失效时在当前可见浏览器登录，验证成功后继续")
     parser.add_argument("--no-comments", action="store_true", help="不采集评论")
     parser.add_argument(
         "--backfill-local",
@@ -263,16 +267,21 @@ def main(argv=None) -> int:
             )
         )
     else:
-        print(
-            run_zhihu_scraper(
-                limit=args.limit,
-                url=args.url,
-                headed=not args.headless,
+        if args.interactive_login and args.headless:
+            parser.error("--interactive-login 需要可见浏览器，不能与 --headless 同用")
+        try:
+            result = run_zhihu_scraper(
+                limit=args.limit, url=args.url, headed=not args.headless,
                 include_comments=not args.no_comments,
-                continue_to_boundary=args.continue_to_boundary,
-                max_new=args.max_new,
+                continue_to_boundary=args.continue_to_boundary, max_new=args.max_new,
+                interactive_login=args.interactive_login,
             )
-        )
+        except LoginPreflightError as exc:
+            print(f"\n[工作流已暂停] {exc}")
+            return 3
+        print(result)
+        if any(str(item).startswith("[报错]") for item in result):
+            return 2
     return 0
 
 
